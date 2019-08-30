@@ -5,6 +5,11 @@ date: "30 August 2019"
 output: md_document
 ---
 
+# Bootstrapped by-catch estimates
+## Marie-Julie Roux
+30 August 2019
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
