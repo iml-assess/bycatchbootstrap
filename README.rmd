@@ -1,0 +1,160 @@
+---
+title: "Bootrstrapped by-catch estimates"
+author: "Marie-Julie Roux"
+date: "30 August 2019"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Installation
+
+```{r install, eval=FALSE}
+devtools::install_github("iml-assess/bycatchboostrap")
+library(bycatchbootstrap)
+```
+
+```{r loadlib, echo=FALSE}
+library(bycatchbootstrap)
+```
+
+
+## INFORMATIONS REQUISES: 
+1. CATEGORIES DE BYCATCH (spx)
+2. DONNEES OBSERVATEURS (obs.all.df)
+3. DONNEES EFFORT COMMERCIAL (STRAT.eff)
+
+### 1. CATEGORIES DE BYCATCH (spx): 
+ESPECES OU GROUPES D'ESPECES POUR LESQUELLES NOUS VOULONS COMPTABILISER LES TAUX DE CAPTURE ET ESTIMER LE VOLUME DES PRISES ACCIDENTELLES;
+A DEFINIR SELON LES INTERETS, LA RESOLUTION TAXONOMIQUE DISPONIBLE OU SOUHAITEE, ETC.
+ICI J'UTILISE UNE LISTE DE 10 ESPECES COMMERCIALES ET NON-COMMERCIALE (CHACUNE REPRESENTEE PAR UN CODE DE 3-LETTRES)
+
+```{r species}
+unique(spx)
+```
+
+### DONNEES OBSERVATEURS (obs.all.df)
+```{r obsdata}
+head(obs.all.df,5)
+```
+
+DONNEES D'OBSERVATEURS POUR UNE FLOTILLE DONNEE (EX. ENSEMBLE DES BATEAUX OPERANT AVEC UN ENGIN DE PECHE DE TYPE X ET CIBLANT L'ESPECE COMMERCIALE Y) 
+LIGNES = EVENEMENTS DE PECHE OBSERVES (UNE LIGNE= UN EVENEMENT DE PECHE)
+COLONNES = STRATES TEMPORELLES (fyear), IDENTIFIANT BATEAU (vessel.key), BYCATCH (kg) PAR CATEGORIE, STRATES SPATIALES (stratum)
+(ici il s'agit des prises (en kg) de 10 especes accessoires sur 11 ans dans 7 strates spatiales pour une flotille comprenant 74 bateaux)
+(un evenement de peche (une ligne) correspond ici a un trait de chalut)
+
+### DONNEES DE LA PECHE COMMERCIALE (STRAT.eff)
+```{r commdata}
+STRAT.eff
+```
+
+EFFORT COMMERCIAL DANS CHAQUE STRATE (TEMPORELLE ET SPATIALE) 
+LIGNES = STRATE TEMPORELLE (fyear)
+COLONNES = STRATES SPATIALES (LES MEMES QUE 'STRATUM' DANS LES DONNEES D'OBSERVATEURS) # IMPORTANT QUE CE SOIT EXACTEMENT LES MEMES!!
+VALEURS = SOMME DE L'EFFORT DE PECHE DANS CHAQUE STRATE 
+(ici il s'agit du nombre de traits de chalut dans 7 strates spatiales sur une periode de 11 ans)
+IMPORTANT: LA DERNIERE COLONNE (SOMMES ANNUELLES) DOIT ETRE INCLUSE!!!
+
+## Run an example based on the NZ data
+
+MATRICES DE RESULTATS - VOLUME ANNUEL DES PRISES ACCIDENTELLES PAR ESPECE, POUR L'ENSEMBLE DE LA PECHE (VOLt)
+```{r voltest}
+VOLt<-matrix(nrow=length(unique(row.names(STRAT.eff))),ncol=length(spx),dimnames=list(rownames(STRAT.eff),spx))
+VOLt_95lo<-VOLt # SELECTIONNER MESURE(S) DE PRECISION 
+VOLt_95hi<-VOLt
+VOLt_cv <-VOLt
+VOLt
+```
+
+
+LISTES DE RESULTATS - VOLUMES ANNUELS DES PRISES ACCIDENTELLES PAR ESPECE PAR STRATE SPATIALE (VOLs)
+```{r volsest}
+VOLs <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'PE(s)')))
+VOLs_cv <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'PEcv')))
+VOLs_95lo <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'PE95lo')))
+VOLs_95hi <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'PE95hi')))
+VOLs
+```
+
+
+LISTES DE RESULTATS - TAUX DE PRISES ACCIDENTELLES ANNUELS PAR ESPECE PAR STRATE SPATIALE (AVEC MESURES DE PRECISION)
+```{r rateest}
+RATES.median <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'median')))
+RATES.95lo <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'rates95lo')))
+RATES.95hi <-array(0,c(dim(STRAT.eff)[[1]],dim(STRAT.eff)[[2]],length(spx)),dimnames=list(dimnames(STRAT.eff)[[1]],dimnames(STRAT.eff)[[2]],paste0(spx,'rates95hi')))
+RATES.median
+```
+
+
+### ESTIMATION EN BOUCLE PAR CATEGORIE DE BYCATCH 
+
+TERMES A SPECIFIER:
+'cutoff' est le seuil (no. minimal) d'observations dans les strates utilise pour l'analyse
+un examen des donnees d'observateur par strate (temporelles et spatiale) permettra de bien definir 'cutoff'
+en-dessous du cutoff, les donnees seront aggregees d'abord dans le temps, puis spatialement.
+'catchcat' est la categorie de bycatch
+'estimator' est le type d'effort de peche (prises par trait, par heure ou par no. d'hamecons)
+'do.null' concerne l'aggregation des donnees lorsque le nombre d'observations est inferieur au cutoff.
+'first.year' est la seule option pour 'do.null' dans cette version du code
+
+NOTE: POUR CET EXEMPLE, LA FONCTION 'mj_boot.effort.group' A L'INTERIEUR DE LA FONCTION GENERALE EST SPECIFIEE POUR RANDOMISER
+LES BATEAUX (group='vessel.key') AVEC UN SEUIL DE TOLERANCE DE 5% POUR LE NOMBRE EFFECTIF DE BATEAUX DANS CHAQUE STRATE (G.tot=0.05)
+ET POUR N'EFFECTUER QUE 10 RANDOMISATIONS (M=10)
+
+```{r bsest, echo=T, results='hide'}
+for(i in 1:length(spx)){
+  mjbootout= mj_boot.a.cat.bycatch(cutoff=25,catchcat=spx[i],estimator="catch.per.tow",do.null="first.year")
+  print(paste(spx[i],"done",sep=" "))
+  VOLt[,spx[i]]<-mjbootout$BYCATCH[,"PE(t)"]
+  VOLt_95lo[,spx[i]]<-mjbootout$BYCATCH[,"95lo"]
+  VOLt_95hi[,spx[i]]<-mjbootout$BYCATCH[,"95hi"]
+  VOLt_cv[,spx[i]]<-mjbootout$BYCATCH[,"cv"]
+  name<-paste0(spx[i],'median')
+  tmp <- mjbootout$RATES[,,'median']
+  RATES.median[,,name] <-tmp
+  name.i<-paste0(spx[i],'rates95lo')
+  tmp.i <- mjbootout$RATES[,,'rates95lo']
+  RATES.95lo[,,name.i] <-tmp.i
+  name.ii<-paste0(spx[i],'rates95hi')
+  tmp.ii <- mjbootout$RATES[,,'rates95hi']
+  RATES.95hi[,,name.ii] <-tmp.ii
+  name.iii<-paste0(spx[i],'PE(s)')
+  tmp.iii <- mjbootout$RATES[,,'PE(s)']
+  VOLs[,,name.iii] <-tmp.iii
+  name.iv<-paste0(spx[i],'PE95lo')
+  tmp.iv <- mjbootout$RATES[,,'PE95lo']
+  VOLs_95lo[,,name.iv] <-tmp.iv
+  name.v<-paste0(spx[i],'PE95hi')
+  tmp.v <- mjbootout$RATES[,,'PE95hi']
+  VOLs_95hi[,,name.v] <-tmp.v
+  name.vi<-paste0(spx[i],'PEcv')
+  tmp.vi <- mjbootout$RATES[,,'PEcv']
+  VOLs_cv[,,name.vi] <-tmp.vi
+  }
+```
+
+CHECK RESULTS VOLUME TOTAL ANNUEL PAR CATEGORIE
+```{r volt}
+VOLt
+VOLt_cv
+VOLt_95hi
+VOLt_95lo
+```
+
+VOLUME ANNUEL PAR STRATE SPATIALE PAR CATEGORIE
+```{r vols}
+VOLs
+VOLs_95hi
+VOLs_95lo
+VOLs_cv
+```
+
+TAUX DE PRISE ACCIDENTELLE PAR STRATE SPATIALE PAR CATEGORIE
+```{r rate}
+RATES.median 
+RATES.95hi
+RATES.95lo
+```
